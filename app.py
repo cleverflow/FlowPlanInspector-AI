@@ -1,4 +1,3 @@
-
 # Deepseek api - sk-cdc65d554f0d4daead2aa49c5642fbd7
 import streamlit as st
 import cv2
@@ -10,12 +9,46 @@ import pandas as pd
 from datetime import datetime
 import base64
 import logging
+from supabase import create_client
+import uuid
+
+# Initialize Supabase
+supabase = create_client(
+    "https://fpahtdebjddftowpkgkr.supabase.co",
+    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZwYWh0ZGViamRkZnRvd3BrZ2tyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3MzQ0MzI1NzUsImV4cCI6MjA1MDAwODU3NX0.w-gUfaHv-s2pSXv9IkPS6rkEUZ4S-CETwuEj6gLAtA0"
+)
 
 logging.basicConfig(level=logging.INFO)
 
 DEEPSEEK_API_KEY = "sk-cdc65d554f0d4daead2aa49c5642fbd7"
 client = OpenAI(api_key=DEEPSEEK_API_KEY, base_url="https://api.deepseek.com")
 MODEL = "deepseek-chat"
+
+def upload_to_supabase(file_bytes, filename, content_type="image/png"):
+    """Upload file to Supabase storage with proper configuration"""
+    try:
+        # Create unique filename
+        unique_filename = f"{uuid.uuid4()}_{filename}"
+        
+        # Set the file options including content-type
+        file_options = {
+            "content-type": content_type,
+            "x-upsert": "true"  # Enable upsert
+        }
+        
+        # Upload file with options
+        supabase.storage.from_('floorplans').upload(
+            path=unique_filename,
+            file=file_bytes,
+            file_options=file_options
+        )
+        
+        # Get public URL
+        return supabase.storage.from_('floorplans').get_public_url(unique_filename)
+    except Exception as e:
+        logging.error(f"Supabase upload error: {str(e)}")
+        st.error(f"Failed to upload to Supabase: {str(e)}")
+        return None
 
 def get_deepseek_analysis(image_bytes):
     try:
@@ -155,7 +188,6 @@ st.title("FlowPlanInspector AI by CleverFlow")
 st.divider()
 st.markdown("FlowPlanInspector AI is an AI-powered tool developed by CleverFlow to analyze and compare floor plans and architectural maps. The platform detects, highlights, and categorizes changes between original and modified maps, helping professionals in architecture, construction, and real estate gain valuable insights into design alterations.")
 
-
 col1, col2 = st.columns(2)
 with col1:
     file1 = st.file_uploader("Original Map", type=["png"])
@@ -165,8 +197,18 @@ with col2:
 if file1 and file2:
     try:
         with st.spinner("Processing..."):
+            # Upload original and modified images to Supabase
+            original_url = upload_to_supabase(file1.getvalue(), f"original_{file1.name}")
+            modified_url = upload_to_supabase(file2.getvalue(), f"modified_{file2.name}")
+            
+            # Process images
             diff_image, similarity, changes, high_quality_img = compare_maps(file1.getvalue(), file2.getvalue())
             verification = verify_output(diff_image, changes)
+            
+            # Upload difference image to Supabase
+            _, buffer = cv2.imencode('.png', diff_image)
+            diff_bytes = buffer.tobytes()
+            diff_url = upload_to_supabase(diff_bytes, f"diff_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png")
         
         st.image(diff_image, caption="Differences Highlighted")
         
