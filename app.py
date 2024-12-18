@@ -216,6 +216,11 @@ if file1 and file2:
             minor_changes = sum(1 for c in changes if c['type'] == 'minor')
             total_changes = len(changes)
             
+            # Store the result image in session state
+            _, buffer = cv2.imencode('.png', diff_image)
+            st.session_state.result_image = buffer.tobytes()
+            diff_bytes = st.session_state.result_image
+
             # Store metadata
             try:
                 metadata = {
@@ -261,15 +266,29 @@ if file1 and file2:
             """)
             
         st.markdown("*Note: Higher opacity indicates greater confidence in detected changes*")
-
+        # Save result URL in session state for download
+        if 'result_url' not in st.session_state:
+            _, buffer = cv2.imencode('.png', diff_image)
+            st.session_state.result_image = buffer.tobytes()
+            
         # Download button
-        with open("high_quality_diff.png", "rb") as file:
-            btn = st.download_button(
-                label="Download High Quality Image",
-                data=file,
-                file_name="floor_map_comparison_hq.png",
-                mime="image/png"
-            )
+        st.download_button(
+            label="Download High Quality Image",
+            data=st.session_state.result_image,
+            file_name="comparison_result.png",
+            mime="image/png",
+            key="download_button"
+        )
+
+
+        # # Download button
+        # with open("high_quality_diff.png", "rb") as file:
+        #     btn = st.download_button(
+        #         label="Download High Quality Image",
+        #         data=file,
+        #         file_name="floor_map_comparison_hq.png",
+        #         mime="image/png"
+        #     )
             
     except Exception as e:
         st.error(f"Error: {str(e)}")
