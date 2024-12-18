@@ -24,27 +24,23 @@ DEEPSEEK_API_KEY = "sk-cdc65d554f0d4daead2aa49c5642fbd7"
 client = OpenAI(api_key=DEEPSEEK_API_KEY, base_url="https://api.deepseek.com")
 MODEL = "deepseek-chat"
 
-def upload_to_supabase(file_bytes, filename, content_type="image/png"):
-    """Upload file to Supabase storage with proper configuration"""
+def upload_to_supabase(file_bytes, filename, folder_path, content_type="image/png"):
+    """Upload file to Supabase storage"""
     try:
-        # Create unique filename
         unique_filename = f"{uuid.uuid4()}_{filename}"
+        path = f"{folder_path}/{unique_filename}"
         
-        # Set the file options including content-type
         file_options = {
             "content-type": content_type,
-            "x-upsert": "true"  # Enable upsert
+            "x-upsert": "true"
         }
         
-        # Upload file with options
         supabase.storage.from_('floorplans').upload(
-            path=unique_filename,
+            path=path,
             file=file_bytes,
             file_options=file_options
         )
-        
-        # Get public URL
-        return supabase.storage.from_('floorplans').get_public_url(unique_filename)
+        return supabase.storage.from_('floorplans').get_public_url(path)
     except Exception as e:
         logging.error(f"Supabase upload error: {str(e)}")
         st.error(f"Failed to upload to Supabase: {str(e)}")
@@ -52,10 +48,8 @@ def upload_to_supabase(file_bytes, filename, content_type="image/png"):
 
 def get_deepseek_analysis(image_bytes):
     try:
-        # Convert image bytes to base64
         image_b64 = base64.b64encode(image_bytes).decode()
         
-        # Create a text description prompt instead of sending image
         messages = [
             {"role": "system", "content": "You are a helpful assistant specialized in analyzing floor maps and architectural changes."},
             {"role": "user", "content": "Please analyze this floor map and describe any notable elements, layouts, and features you observe."}
@@ -149,14 +143,12 @@ def compare_maps(img1_bytes, img2_bytes, min_diff_area=200, major_diff_area=500)
     
     similarity = 100 - (np.count_nonzero(thresh) / thresh.size * 100)
     
-    # Save high quality image
     high_quality_img = cv2.imwrite("high_quality_diff.png", diff_colored, [cv2.IMWRITE_PNG_COMPRESSION, 0])
     
     return diff_colored, similarity, changes, high_quality_img
 
 def verify_output(diff_image, changes):
     try:
-        # Create a text description of the changes instead of sending image
         change_description = f"Found {len(changes)} changes in the floor map. "
         change_description += f"Major changes: {sum(1 for c in changes if c['type'] == 'major')}, "
         change_description += f"Minor changes: {sum(1 for c in changes if c['type'] == 'minor')}"
@@ -186,6 +178,12 @@ st.set_page_config(
 
 st.title("FlowPlanInspector AI by CleverFlow")
 st.divider()
+
+# Reset button
+if st.button("Reset"):
+    st.cache_data.clear()
+    st.rerun()
+
 st.markdown("FlowPlanInspector AI is an AI-powered tool developed by CleverFlow to analyze and compare floor plans and architectural maps. The platform detects, highlights, and categorizes changes between original and modified maps, helping professionals in architecture, construction, and real estate gain valuable insights into design alterations.")
 
 col1, col2 = st.columns(2)
@@ -197,18 +195,44 @@ with col2:
 if file1 and file2:
     try:
         with st.spinner("Processing..."):
-            # Upload original and modified images to Supabase
-            original_url = upload_to_supabase(file1.getvalue(), f"original_{file1.name}")
-            modified_url = upload_to_supabase(file2.getvalue(), f"modified_{file2.name}")
+            # Generate folder name
+            folder_name = datetime.now().strftime('%Y%m%d_%H%M%S')
+            
+            # Upload original and modified images
+            upload_to_supabase(file1.getvalue(), file1.name, f"{folder_name}/original")
+            upload_to_supabase(file2.getvalue(), file2.name, f"{folder_name}/modified")
             
             # Process images
             diff_image, similarity, changes, high_quality_img = compare_maps(file1.getvalue(), file2.getvalue())
             verification = verify_output(diff_image, changes)
             
-            # Upload difference image to Supabase
+            # Upload difference image
             _, buffer = cv2.imencode('.png', diff_image)
             diff_bytes = buffer.tobytes()
-            diff_url = upload_to_supabase(diff_bytes, f"diff_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png")
+            upload_to_supabase(diff_bytes, f"diff_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png", f"{folder_name}/result")
+            
+            # Calculate change counts
+            major_changes = sum(1 for c in changes if c['type'] == 'major')
+            minor_changes = sum(1 for c in changes if c['type'] == 'minor')
+            total_changes = len(changes)
+            
+            # Store metadata
+            try:
+                metadata = {
+                    "run_id": folder_name, 
+                    "timestamp": datetime.now().isoformat(),
+                    "similarity_score": float(similarity),
+                    "major_changes": int(major_changes),
+                    "minor_changes": int(minor_changes),
+                    "total_changes": int(total_changes)
+                }
+                
+                result = supabase.table('analysis_runs').insert(metadata).execute()
+                if not result.data:
+                    st.warning("Failed to store analysis metadata")
+                    
+            except Exception as e:
+                logging.error(f"Failed to store metadata: {str(e)}")
         
         st.image(diff_image, caption="Differences Highlighted")
         
@@ -218,7 +242,6 @@ if file1 and file2:
         with col2:
             st.metric("Changes", len(changes))
 
-        # Display verification results
         if verification != "Verification unavailable":
             st.subheader("AI Analysis")
             st.write(verification)
