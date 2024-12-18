@@ -170,6 +170,18 @@ def verify_output(diff_image, changes):
         logging.error(f"Verification error: {str(e)}")
         return "Verification unavailable"
 
+# Initialize session state
+if 'processing_complete' not in st.session_state:
+    st.session_state.processing_complete = False
+if 'result_image' not in st.session_state:
+    st.session_state.result_image = None
+if 'similarity' not in st.session_state:
+    st.session_state.similarity = None
+if 'changes' not in st.session_state:
+    st.session_state.changes = None
+if 'verification' not in st.session_state:
+    st.session_state.verification = None
+
 # Streamlit UI
 st.set_page_config(
     page_title="FlowPlanInspector AI by CleverFlow",
@@ -180,19 +192,25 @@ st.title("FlowPlanInspector AI by CleverFlow")
 st.divider()
 
 # Reset button
-if st.button("Reset"):
+if st.button("Reset", key="reset_button"):
+    st.session_state.processing_complete = False
+    st.session_state.result_image = None
+    st.session_state.similarity = None
+    st.session_state.changes = None
+    st.session_state.verification = None
     st.cache_data.clear()
     st.rerun()
 
-st.markdown("FlowPlanInspector AI is an AI-powered tool developed by CleverFlow to analyze and compare floor plans and architectural maps. The platform detects, highlights, and categorizes changes between original and modified maps, helping professionals in architecture, construction, and real estate gain valuable insights into design alterations.")
+st.markdown("FlowPlanInspector AI is an AI-powered tool developed by CleverFlow to analyze and compare floor plans and architectural maps.")
 
+# File uploaders
 col1, col2 = st.columns(2)
 with col1:
-    file1 = st.file_uploader("Original Map", type=["png"])
+    file1 = st.file_uploader("Original Map", type=["png"], key="file_uploader_1")
 with col2:
-    file2 = st.file_uploader("Modified Map", type=["png"])
+    file2 = st.file_uploader("Modified Map", type=["png"], key="file_uploader_2")
 
-if file1 and file2:
+if file1 and file2 and not st.session_state.processing_complete:
     try:
         with st.spinner("Processing..."):
             # Generate folder name
@@ -206,25 +224,30 @@ if file1 and file2:
             diff_image, similarity, changes, high_quality_img = compare_maps(file1.getvalue(), file2.getvalue())
             verification = verify_output(diff_image, changes)
             
-            # Upload difference image
+            # Store results in session state
             _, buffer = cv2.imencode('.png', diff_image)
-            diff_bytes = buffer.tobytes()
-            upload_to_supabase(diff_bytes, f"diff_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png", f"{folder_name}/result")
+            st.session_state.result_image = buffer.tobytes()
+            st.session_state.similarity = similarity
+            st.session_state.changes = changes
+            st.session_state.verification = verification
+            st.session_state.processing_complete = True
+            
+            # Upload difference image
+            upload_to_supabase(
+                st.session_state.result_image,
+                f"diff_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png",
+                f"{folder_name}/result"
+            )
             
             # Calculate change counts
             major_changes = sum(1 for c in changes if c['type'] == 'major')
             minor_changes = sum(1 for c in changes if c['type'] == 'minor')
             total_changes = len(changes)
             
-            # Store the result image in session state
-            _, buffer = cv2.imencode('.png', diff_image)
-            st.session_state.result_image = buffer.tobytes()
-            diff_bytes = st.session_state.result_image
-
             # Store metadata
             try:
                 metadata = {
-                    "run_id": folder_name, 
+                    "run_id": folder_name,
                     "timestamp": datetime.now().isoformat(),
                     "similarity_score": float(similarity),
                     "major_changes": int(major_changes),
@@ -238,58 +261,50 @@ if file1 and file2:
                     
             except Exception as e:
                 logging.error(f"Failed to store metadata: {str(e)}")
-        
-        st.image(diff_image, caption="Differences Highlighted")
-        
-        col1, col2 = st.columns(2)
-        with col1:
-            st.metric("Similarity", f"{similarity:.1f}%")
-        with col2:
-            st.metric("Changes", len(changes))
-
-        if verification != "Verification unavailable":
-            st.subheader("AI Analysis")
-            st.write(verification)
-
-        # Color legend explanation
-        st.subheader("Color Guide")
-        legend_col1, legend_col2 = st.columns(2)
-        with legend_col1:
-            st.markdown("""
-            🔴 **Red Areas**: Major structural changes  
-            🟡 **Yellow Areas**: Minor modifications
-            """)
-        with legend_col2:
-            st.markdown("""
-            🟩 **Green Boxes**: Change boundaries  
-            ⬜ **White Areas**: No changes detected
-            """)
-            
-        st.markdown("*Note: Higher opacity indicates greater confidence in detected changes*")
-        # Save result URL in session state for download
-        if 'result_url' not in st.session_state:
-            _, buffer = cv2.imencode('.png', diff_image)
-            st.session_state.result_image = buffer.tobytes()
-            
-        # Download button
-        st.download_button(
-            label="Download High Quality Image",
-            data=st.session_state.result_image,
-            file_name="comparison_result.png",
-            mime="image/png",
-            key="download_button"
-        )
-
-
-        # # Download button
-        # with open("high_quality_diff.png", "rb") as file:
-        #     btn = st.download_button(
-        #         label="Download High Quality Image",
-        #         data=file,
-        #         file_name="floor_map_comparison_hq.png",
-        #         mime="image/png"
-        #     )
-            
+                
     except Exception as e:
         st.error(f"Error: {str(e)}")
         st.info("Please check input files")
+
+# Display results if processing is complete
+if st.session_state.processing_complete and st.session_state.result_image is not None:
+    # Display the image
+    st.image(st.session_state.result_image, caption="Differences Highlighted")
+    
+    # Display metrics
+    col1, col2 = st.columns(2)
+    with col1:
+        st.metric("Similarity", f"{st.session_state.similarity:.1f}%")
+    with col2:
+        st.metric("Changes", len(st.session_state.changes))
+
+    # Display verification
+    if st.session_state.verification != "Verification unavailable":
+        st.subheader("AI Analysis")
+        st.write(st.session_state.verification)
+
+    # Color guide
+    st.subheader("Color Guide")
+    legend_col1, legend_col2 = st.columns(2)
+    with legend_col1:
+        st.markdown("""
+        🔴 **Red Areas**: Major structural changes  
+        🟡 **Yellow Areas**: Minor modifications
+        """)
+    with legend_col2:
+        st.markdown("""
+        🟩 **Green Boxes**: Change boundaries  
+        ⬜ **White Areas**: No changes detected
+        """)
+        
+    st.markdown("*Note: Higher opacity indicates greater confidence in detected changes*")
+
+    # Download button for high quality image
+    with open("high_quality_diff.png", "rb") as file:
+        st.download_button(
+            label="Download High Quality Image",
+            data=file,
+            file_name="floor_map_comparison_hq.png",
+            mime="image/png",
+            key="download_button_main"
+        )
