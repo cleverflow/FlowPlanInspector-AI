@@ -184,11 +184,11 @@ if 'verification' not in st.session_state:
 
 # Streamlit UI
 st.set_page_config(
-    page_title="FlowPlanInspector AI by CleverFlow",
+    page_title="Floor Plan Inspector AI ",
     page_icon=":robot_face:",
 )
 
-st.title("FlowPlanInspector AI by CleverFlow")
+st.title("Floor Plan Inspector AI ")
 st.divider()
 
 # Reset button
@@ -201,7 +201,7 @@ if st.button("Reset", key="reset_button"):
     st.cache_data.clear()
     st.rerun()
 
-st.markdown("FlowPlanInspector AI is an AI-powered tool developed by CleverFlow to analyze and compare floor plans and architectural maps.")
+st.markdown("Floor Plan Inspector AI is an AI-powered tool developed  to analyze and compare floor plans and architectural maps.")
 
 # File uploaders
 col1, col2 = st.columns(2)
